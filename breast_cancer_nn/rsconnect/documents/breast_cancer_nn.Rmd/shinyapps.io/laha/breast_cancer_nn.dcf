@@ -1,0 +1,9 @@
+name: breast_cancer_nn
+account: laha
+server: shinyapps.io
+appId: 133396
+bundleId: 594746
+url: https://laha.shinyapps.io/breast_cancer_nn/
+when: 1477293902.38064
+asMultiple: FALSE
+asStatic: FALSE

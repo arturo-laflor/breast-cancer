@@ -1,0 +1,321 @@
+---
+title: "Example of an Artificial Neural Network in the Medical Field"
+author: "Arturo Laflor"
+date: "21 de octubre de 2016"
+output: html_document
+runtime: shiny
+---
+https://laha.shinyapps.io/breast_cancer_nn/
+
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(knitr)
+library(DT)
+library(xtable)
+library(neuralnet)
+library(magrittr)
+library(png)
+library(jpeg)
+library(devtools)
+library(ggplot2)
+
+knitr::opts_chunk$set(echo = TRUE)
+ruta<-getwd()
+setwd(ruta)
+source("plot.nnet.R")
+```
+
+##Introduction
+This is an example of MLA, applied to a medical database. Specifically, shows how an artificial neural network (ANN) is able to learn from data, and predict with high accuracy if a tumor is malignant or benignant. The data input are the same variables that physicians analyse to give a diagnose.  
+
+
+## Inputs variables
+
+As input data, we have nine variables related with a biopsy sample
+
+1. Clump Thickness
+2. Uniformity of Cell Size
+3. Uniformity of Cell Shape
+4. Marginal Adhesion
+5. Single Epithelial Cell Size
+6. Bare Nuclei         	   
+7. Bland Chromatin         	    
+8. Normal Nucleoli         	  
+9. Mitoses
+<!-- \(\begin{table} -->
+<!-- \centering -->
+<!-- \begin{tabular}{|c|c|c|} -->
+<!-- \hline  & Variable & Values \\  -->
+<!-- \hline 1. & Clump Thickness & [1-10] \\  -->
+<!-- \hline 2. & Uniformity of Cell Size & [1-10] \\  -->
+<!-- \hline 3. & Uniformity of Cell Shape & [1-10]  \\  -->
+<!-- \hline 4. & Marginal Adhesion & [1-10] \\  -->
+<!-- \hline 5. & Single Epithelial Cell Size & [1-10] \\  -->
+<!-- \hline 6. & Bare Nuclei  & [1-10] \\  -->
+<!-- \hline 7. & Bland Chromatin   & [1-10] \\  -->
+<!-- \hline 8. & Normal Nucleoli   & [1-10] \\  -->
+<!-- \hline 9. & Mitoses  & [1-10] \\  -->
+<!-- \hline  -->
+<!-- \end{tabular} -->
+<!-- \end{table}\) -->
+
+We show the database as it was provided by the authors:
+
+
+```{r eruptions, echo=FALSE}
+
+dt0<-read.csv(file="breast_cancer.csv",header=T,sep=",")
+  
+DT::renderDataTable(dt0,server = TRUE,
+              options = list(
+              columnDefs = list(list(className = 'dt-center', targets = 5)),
+              pageLength = 5,
+              lengthMenu = c(5, 10, 15, 20)))
+
+```
+
+##Pre-process
+
+This database have 699 rows, however there are some rows that have missing data, for example the row 146 have an unknown data in the variable seven (v6). All records with missing data must be dropped before to procced to generate the model. Additionaly we'll eliminate the column id what is not important to our analysis, and we'll procced to change the values in the target variable from 2 and 4, to 0 and 1 respectively, where 0 is equivalent to benignant and 1 is equivalent to malignant.
+
+The next table shows the database after be preprocessed:
+```{r preprocess, echo=FALSE}
+
+dt1<-dt0
+
+dt1[which(dt1[,7]=='?',arr.ind = T),7]<-NA
+    dt1$v6<-as.integer(dt1$v6)
+    dt1<-dt1[complete.cases(dt1),]
+    dt1<-dt1[-1]
+    
+     dt1$R<-as.character(dt1$R)
+
+    dt1[dt1$R=='4',10]<- 'Malignant'
+    dt1[dt1$R=='2',10]<- 'Benignant'
+    
+   
+    
+    names(dt1)<-c("Clump_T","Size","Shape","M_Adhesion","Ep_Cell_Size","B_Nuclei","B_Chromatin","N_Nucleo","Mitosis","Diagnose")
+
+DT::renderDataTable(dt1,server = TRUE,
+              options = list(
+              columnDefs = list(list(className = 'dt-center', targets = 5)),
+              pageLength = 5,
+              lengthMenu = c(5, 10, 15, 20)))
+
+
+```
+
+##Cases: Malignant vs Benignant
+
+In the graph bar, we can see that the quantity of benignan tumors (M=`r length(dt1[dt1$Diagnose=="Malignant",1])`) are more than malignan ones (B=`r length(dt1[dt1$Diagnose=="Benignant",1])`)
+
+
+```{r grafica_buenos_malos, echo=F}
+
+  
+dt<-dt1
+
+gg<-ggplot(data = dt,aes(x=Diagnose))+geom_bar(aes(fill=Diagnose),width=0.2)+
+    scale_fill_manual(values=c("white","black"))
+gg  
+  
+
+
+```
+
+##Training Artificial Neural NEtwork
+Now, the data is prepared to train the artificial neural network, to obtain a model that gives us mathematical evidence to decide if a new suspicious cell tissue, really has high likelihood of be a malignant tumor or not.
+
+We can choose the quantity of neurons that we can have in the ANN. We are going to train the ANN whit 70% of the data, the other 30% will be used as a test set. It means that this 30% takes the rol of new cases to validate the accuracy of the algorithm. When the process be completed, the precision of the prediction over new cases (test set) will be shown. 
+
+```{r trening, echo=FALSE}
+inputPanel(
+  div(
+    sliderInput("siNN","Total of neurons",min = 3,max = 8,value = 5)
+  )
+)
+inputPanel(
+    textOutput("txtPrediction"),
+    tags$style(type="text/css","#txtPrediction{background-color:lightgray;color:darkblue;
+              font-family:sans-serif;font-weight:bold;font-size:13px;width:350px;text-align:center;} ")
+)
+
+```
+
+##Neural net structure.
+
+```{r neural_net,echo=FALSE}
+inputPanel(
+  plotOutput("plotNN",width = "700px")
+  
+)
+
+
+dt[dt$Diagnose=='Malignant',10]<- '1'
+dt[dt$Diagnose=='Benignant',10]<- '0'
+dt$Diagnose<-as.numeric(dt$Diagnose)
+
+
+
+dtt<-dt[1:500,]
+
+dttest<-dt[501:683,]
+
+ann<-reactive({
+  neuralnet(Diagnose~Clump_T+Size+Shape+M_Adhesion+Ep_Cell_Size+B_Nuclei+B_Chromatin+N_Nucleo+Mitosis,data = dtt,hidden =input$siNN,linear.output = F )
+})
+
+prnn<-reactive({compute(ann(),dttest[1:9])})
+pred<-reactive({as.data.frame(prnn()$net.result)%>%{round(.$V1,digits=0)}})
+output$txtPrediction<-renderText({
+  paste("The precision of predictions in new cases is: ",round(100*mean(dttest$Diagnose==pred()),digits = 3),"%","") 
+})
+
+output$plotNN<-renderPlot({
+  plot.nnet(ann())
+  #plot.nn(ann())
+})
+```
+
+
+##Now, you try!
+
+
+In this table, there are six rows that was no used to train the ANN, you can choose one of them and fill the fields to verify the efficience of the model. The ANN will compute data with the model and it will diagnose the sample. The result is a probability of malignant or benignant cell tissue. 
+
+On the other hand, you can try with a new case that is not in the six ones, consider that you need to enter coherent values to obtain a coherent answer. 
+
+
+
+```{r reg_examples, echo=FALSE}
+renderTable({
+  registros<-round(runif(6,min = 1,max = 120),digits = 0)
+  dttest[registros,]
+})
+```
+
+
+
+```{r practice,echo=FALSE}
+
+inputPanel(
+  numericInput("niClump_T","1. Clump Thickness",value = 1,min = 1,max = 10,step = 1,width = "150px"),
+    numericInput("niSize","2. Uniformity of Cell Size",value = 1,min = 1,max = 10,step = 1,width = "200px"),
+  numericInput("niShape","3. Uniformity of Cell Shape",value = 1,min = 1,max = 10,step = 1,width = "200px"),
+  numericInput("niM_Adhesion","4. Marginal Adhesion",value = 1,min = 1,max = 10,step = 1,width = "150px")
+  
+ 
+)
+
+inputPanel(
+   numericInput("niEp_Cell_Size","5. Single Epithelial Cell Size",value = 1,min = 1,max = 10,step = 1,width = "200px"),
+  numericInput("niB_Nuclei","6. Bare Nuclei",value = 1,min = 1,max = 10,step = 1,width = "130px"),
+  numericInput("niB_Chromatin","7. Bland Chromatin ",value = 1,min = 1,max = 10,step = 1,width = "140px"),
+  numericInput("niN_Nucleo","8. Normal Nucleoli   ",value = 1,min = 1,max = 10,step = 1,width = "130px"),
+  numericInput("niMitosis","9. Mitosis",value = 1,min = 1,max = 10,step = 1,width = "90px"),
+  imageOutput("imgGoodBad",width = "70px",height = "70px")
+)
+
+
+wellPanel(
+  fluidRow(
+    
+    column(2,imageOutput("imgCarita",width = "100px",height = "100px")),
+    column(2,
+           textOutput("txtPredictionNewSample"),
+           tags$style(type="text/css","#txtPredictionNewSample{background-color:lightgray;color:darkblue;
+              font-family:sans-serif;font-weight:bold;font-size:13px;width:130px;text-align:center;} ")
+           )
+  )
+  
+  
+  
+)
+
+dttry<-reactive({
+    dttry<-data.frame(input$niClump_T,input$niSize,input$niShape,input$niM_Adhesion,input$niEp_Cell_Size,input$niB_Nuclei,input$niB_Chromatin,input$niN_Nucleo,input$niMitosis)
+  
+})
+
+prob<-reactive(
+  {
+    BorM<-compute(ann(),dttry()[1:9])
+    prob<-round(BorM$net.result*100,digits = 2)
+    
+  }
+)
+
+output$txtPredictionNewSample<-renderText({
+  
+  if(prob()>50){
+      MB<-paste("Probabily of Malignat: ",prob(),"%.",sep = "")
+    }else{
+      MB<-paste("Probabily of Benignant: ",100-prob(),"%.",sep = "")
+    }
+    MB
+})
+
+output$imgCarita<-renderImage({
+  # When input$n is 3, filename is ./images/image3.jpeg
+  filename<-""
+  if(prob()>50){
+    # filename <- normalizePath(file.path('./figures',
+    #                           paste('sad_smiley','.jpg', sep='')))
+    filename<-"./www/figures/sad_smiley.jpg" 
+  }else{
+    # filename <- normalizePath(file.path('./figures',
+    #                           paste('carita_feliz','.jpg', sep='')))
+    filename<-"./www/figures/carita_feliz.jpg"
+  }
+    # Return a list containing the filename and alt text
+    list(src = filename,
+         alt = "Carita",
+         height = 100,
+          width = 100
+         )
+    
+},deleteFile = FALSE)
+
+output$imgGoodBad<-renderImage({
+  # When input$n is 3, filename is ./images/image3.jpeg
+  filename<-""
+  if(prob()>50){
+    filename <- "./www/figures/wrong.png" 
+    
+    #normalizePath(file.path('./www', paste('wrong','.png', sep='')))
+    
+  }else{
+    filename <- "./www/figures/good.png" 
+    
+    #normalizePath(file.path('./www', paste('good','.png', sep='')))
+  }
+    # Return a list containing the filename and alt text
+    list(src = filename,
+         alt = "GoodWrong",
+         height = 70,
+          width = 70
+         )
+    
+},deleteFile = FALSE)
+
+
+```
+
+
+
+
+```{r tabsets, echo=FALSE}
+
+# shinyAppDir(
+#   system.file("examples/06_tabsets", package = "shiny"),
+#   options = list(
+#     width = "100%", height = 550
+#   )
+# )
+```
+
+
+
+
